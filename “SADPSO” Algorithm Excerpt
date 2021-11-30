@@ -1,0 +1,613 @@
+“SADPSO” Algorithm Excerpt
+
+function [OUT,varargout]= SADPSO (functname,D,varargin)
+
+rand('state',sum(100*clock));
+
+if nargin < 2
+
+  error('Not enough arguments.');
+
+end
+
+ 
+
+% PSO PARAMETERS
+
+if nargin == 2   % only specified functname and D
+
+  VRmin=ones(D,1)*-100;  %matrix of ranges for each input variable
+
+  VRmax=ones(D,1)*100;  
+
+  VR=[VRmin,VRmax];
+
+  minmax = 0;
+
+  P = [];
+
+  mv = 4; %max particle velocit
+
+  plotfcn='Mygoplotpso';  
+
+elseif nargin == 3 % specified functname, D, and mv
+
+  VRmin=ones(D,1)*-100; 
+
+  VRmax=ones(D,1)*100;  
+
+  VR=[VRmin,VRmax];
+
+  minmax = 0;
+
+  mv=varargin{1};
+
+  if isnan(mv)
+
+​    mv=4;
+
+  end
+
+  P = [];
+
+  plotfcn='Mygoplotpso';  
+
+elseif nargin == 4 % specified functname, D, mv, Varrange
+
+  mv=varargin{1};
+
+  if isnan(mv)
+
+​    mv=4;
+
+  end
+
+  VR=varargin{2}; 
+
+  minmax = 0;
+
+  P = [];
+
+  plotfcn='Mygoplotpso';  
+
+elseif nargin == 5 % Functname, D, mv, Varrange, and minmax
+
+  mv=varargin{1};
+
+  if isnan(mv)
+
+​    mv=4;
+
+  end  
+
+  VR=varargin{2};
+
+  minmax=varargin{3};
+
+  P = [];
+
+  plotfcn='Mygoplotpso';
+
+elseif nargin == 6 % Functname, D, mv, Varrange, minmax, and psoparams
+
+  mv=varargin{1};
+
+  if isnan(mv)
+
+​    mv=4;
+
+  end  
+
+  VR=varargin{2};
+
+  minmax=varargin{3};
+
+  P = varargin{4}; % psoparams
+
+  plotfcn='Mygoplotpso';  
+
+elseif nargin == 7 % Functname, D, mv, Varrange, minmax, and psoparams, plotfcn
+
+  mv=varargin{1};
+
+  if isnan(mv)
+
+​    mv=4;
+
+  end  
+
+  VR=varargin{2};
+
+  minmax=varargin{3};
+
+  P = varargin{4}; % psoparams
+
+  plotfcn = varargin{5}; 
+
+elseif nargin == 8 % Functname, D, mv, Varrange, minmax, and psoparams, plotfcn, PSOseedValue
+
+  mv=varargin{1};
+
+  if isnan(mv)
+
+​    mv=4;
+
+  end  
+
+  VR=varargin{2};
+
+  minmax=varargin{3};
+
+  P = varargin{4}; % psoparams
+
+  plotfcn = varargin{5}; 
+
+  PSOseedValue = varargin{6};
+
+else  
+
+  error('Wrong # of input arguments.');
+
+end
+
+ 
+
+% sets up default pso params
+
+Pdef = [500 1000 24 2 2 0.95 0.2 1500 1e-25 250 NaN 4 0 2 0.2 0.2 0.2 0.000005 0.25];
+
+% Set corresponding parameter values
+
+Plen = length(P);
+
+P  = [P,Pdef(Plen+1:end)];
+
+df   = P(1);
+
+me   = P(2);  %The largest training algebra
+
+ps   = P(3);
+
+ac1   = P(4);
+
+ac2   = P(5);
+
+iw1   = P(6);
+
+iw2   = P(7);
+
+iwe   = P(8);
+
+ergrd  = P(9);
+
+ergrdep = P(10);
+
+errgoal = P(11);
+
+trelea = P(12);
+
+PSOseed = P(13);
+
+ac3=P(14);    % Third maximum acceleration
+
+ac1_min=P(15);  % Minimum first acceleration
+
+ac2_min=P(16);   % Second minimum acceleration
+
+ac3_min=P(17);  % The third minimum acceleration
+
+d_low=P(18);   % diversity min value d_low
+
+d_high=P(19);   % diversity max value d_high
+
+dir=1;
+
+% used with trainpso, for neural net training
+
+if strcmp(functname,'pso_neteval')
+
+  net = evalin('caller','net');
+
+  Pd = evalin('caller','Pd');
+
+  Tl = evalin('caller','Tl');
+
+  Ai = evalin('caller','Ai');
+
+   Q = evalin('caller','Q');
+
+  TS = evalin('caller','TS');
+
+end
+
+% error checking
+
+ if ((minmax==2) & isnan(errgoal))
+
+   error('minmax= 2, errgoal= NaN: choose an error goal or set minmax to 0 or 1');
+
+ end
+
+ 
+
+ if ( (PSOseed==1) & ~exist('PSOseedValue') )
+
+   error('PSOseed flag set but no PSOseedValue was input');
+
+ end
+
+ 
+
+ if exist('PSOseedValue')
+
+   tmpsz=size(PSOseedValue);
+
+   if D < tmpsz(2)
+
+​     error('PSOseedValue column size must be D or less');
+
+   end
+
+   if ps < tmpsz(1)
+
+​     error('PSOseedValue row length must be # of particles or less');
+
+   end
+
+ end
+
+ 
+
+% set plotting flag
+
+if (P(1))~=0
+
+ plotflg=1;
+
+else
+
+ plotflg=0;
+
+end
+
+ 
+
+% preallocate variables for speed up
+
+tr = ones(1,me)*NaN;
+
+% take care of setting max velocity and position params here
+
+if length(mv)==1
+
+ velmaskmin = -mv*ones(ps,D);   % min vel, psXD matrix
+
+ velmaskmax = mv*ones(ps,D);   % max vel
+
+elseif length(mv)==D   
+
+ velmaskmin = repmat(forcerow(-mv),ps,1); % min vel
+
+ velmaskmax = repmat(forcerow( mv),ps,1); % max vel
+
+else
+
+ error('Max vel must be either a scalar or same length as prob dimension D');
+
+end
+
+posmaskmin = repmat(VR(1:D,1)',ps,1); % min pos, psXD matrix
+
+posmaskmax = repmat(VR(1:D,2)',ps,1); % max pos
+
+posmaskmeth = 3; % 3=bounce method (see comments below inside epoch loop)
+
+% PLOTTING
+
+message = sprintf('PSO: %%g/%g iterations, GBest = %%20.20g.\n',me);
+
+ % initialize population of particles and their velocities at time zero,
+
+ pos(1:ps,1:D) = normmat(rand([ps,D]),VR',1); 
+
+if PSOseed == 1     % initial positions user input, see comments above
+
+  tmpsz           = size(PSOseedValue);
+
+  pos(1:tmpsz(1),1:tmpsz(2)) = PSOseedValue; 
+
+end
+
+ % construct initial random velocities between -mv,mv
+
+ vel(1:ps,1:D) = normmat(rand([ps,D]),...
+
+ [forcecol(-mv),forcecol(mv)]',1);
+
+ 
+
+% initial pbest positions vals
+
+ pbest = pos;
+
+% initite neighbor
+
+lbest=pos;
+
+lbestval=zeros(ps,ps);  
+
+%vector this, or at least vectorize cost funct call 
+
+out = feval(functname,pos); % returns column of cost values (1 for each particle) 
+
+pbestval=out;  % initially, pbest is same as pos
+
+templbestval=out;
+
+% assign initial gbest here also (gbest and gbestval)
+
+if minmax==1
+
+  % this picks gbestval when we want to maximize the function
+
+  [gbestval,idx1] = max(pbestval);
+
+elseif minmax==0
+
+  % this works for straight minimization
+
+  [gbestval,idx1] = min(pbestval);
+
+elseif minmax==2
+
+  [temp,idx1] = min((pbestval-ones(size(pbestval))*errgoal).^2);
+
+  gbestval  = pbestval(idx1);
+
+end
+
+% preallocate a variable to keep track of gbest for all iters
+
+bestpos    = zeros(me,D+1)*NaN;
+
+gbest     = pbest(idx1,:); % this is gbest position
+
+% used with trainpso, for neural net training
+
+if strcmp(functname,'pso_neteval')
+
+​    net=setx(net,gbest);
+
+end
+
+%tr(1)     = gbestval;    % save for output
+
+bestpos(1,1:D) = gbest;   % save for gbest location
+
+sentryval = gbestval;
+
+sentry  = gbest;
+
+ if (trelea == 3)
+
+kappa  = 1; % standard val = 1, change for more or less constriction  
+
+ if ( (ac1+ac2) <=4 )
+
+   chi = kappa;
+
+ else
+
+   psi   = ac1 + ac2;
+
+   chi_den = abs(2-psi-sqrt(psi^2 - 4*psi));
+
+   chi_num = 2*kappa;
+
+   chi   = chi_num/chi_den;
+
+ end
+
+end
+
+ 
+
+rstflg = 0; % for dynamic environment checking
+
+% start PSO iterative procedures
+
+ cnt  = 0; % counter used for updating display according to df in the options
+
+ cnt2  = 0; % counter used for the stopping subroutine based on error convergence
+
+ iwt(1) = iw1; 
+
+for i=1:me % start epoch loop (iterations) 
+
+   out    = feval(functname,[pos;gbest]);
+
+   outbestval = out(end,:); 
+
+   out    = out(1:end-1,:);
+
+   tr(i+1)     = gbestval; % keep track of global best val 
+
+   te        = i; % returns epoch number to calling program when done 
+
+   bestpos(i,1:D+1) = [gbest,gbestval];
+
+  % this section does the plots during iterations 
+
+  if plotflg==1   
+
+   if (rem(i,df) == 0 ) | (i==me) | (i==1) 
+
+​     fprintf(message,i,gbestval);
+
+​     cnt = cnt+1; % count how many times we display (useful for movies)     
+
+​     eval(plotfcn); % defined at top of script     
+
+   end % end update display every df if statement  
+
+  end % end plotflg if statement
+
+  % check for an error space that changes wrt time/iter threshold value that determines dynamic environment 
+
+  chkdyn = 1;
+
+  rstflg = 0; % for dynamic environment checking
+
+  if chkdyn==1
+
+   threshld = 0.05; % percent current best is allowed to change, .05 = 5% etc
+
+   letiter = 5; % # of iterations before checking environment, leave at least 3 so PSO has time to converge
+
+   outorng = abs( 1- (outbestval/gbestval) ) >= threshld;
+
+   samepos = (max( sentry == gbest ));
+
+   if (outorng & samepos) & rem(i,letiter)==0
+
+​     rstflg=1;
+
+​    % disp('New Environment: reset pbest, gbest, and vel');
+
+​    pbest   = pos; % reset personal bests to current positions
+
+​    pbestval = out; 
+
+​    vel    = vel*10; % agitate particles a little (or a lot)    
+
+​    % recalculate best vals 
+
+​     if minmax == 1
+
+​      [gbestval,idx1] = max(pbestval);
+
+​    elseif minmax==0
+
+​      [gbestval,idx1] = min(pbestval);
+
+​    elseif minmax==2 % this section needs work
+
+​      [temp,idx1] = min((pbestval-ones(size(pbestval))*errgoal).^2);
+
+​      gbestval  = pbestval(idx1);
+
+​    end    
+
+​    gbest = pbest(idx1,:);    
+
+​    % used with trainpso, for neural net training
+
+​    if strcmp(functname,'pso_neteval')
+
+​      net=setx(net,gbest);
+
+​    end
+
+   end % end if outorng   
+
+   sentryval = gbestval;
+
+   sentry  = gbest;  
+
+  end   
+
+  % find particles where we have new pbest, depending on minmax choice then find gbest and gbestval[size(out),size(pbestval)]
+
+  if rstflg == 0
+
+   if minmax == 0
+
+​    [tempi]      = find(pbestval>=out); % new min pbestvals
+
+​    pbestval(tempi,1) = out(tempi);  % update pbestvals
+
+​    pbest(tempi,:)   = pos(tempi,:); % update pbest positions    
+
+​    [iterbestval,idx1] = min(pbestval);    
+
+​    if gbestval >= iterbestval
+
+​      gbestval = iterbestval;
+
+​      gbest  = pbest(idx1,:);
+
+​      if strcmp(functname,'pso_neteval')
+
+​        net=setx(net,gbest);
+
+​       end
+
+​    end
+
+   elseif minmax == 1
+
+​    [tempi,dum]    = find(pbestval<=out); % new max pbestvals
+
+​    pbestval(tempi,1) = out(tempi,1); % update pbestvals
+
+​    pbest(tempi,:)   = pos(tempi,:); % update pbest positions 
+
+​    [iterbestval,idx1] = max(pbestval);
+
+​    if gbestval <= iterbestval
+
+​      gbestval = iterbestval;
+
+​      gbest  = pbest(idx1,:);
+
+​      if strcmp(functname,'pso_neteval')
+
+​        net=setx(net,gbest);
+
+​      end
+
+​    end
+
+   elseif minmax == 2 % this won't work as it is, fix it later
+
+​    egones      = errgoal*ones(ps,1); % vector of errgoals
+
+​    sqrerr2      = ((pbestval-egones).^2);
+
+​    sqrerr1      = ((out-egones).^2);
+
+​    [tempi,dum]    = find(sqerr1 <= sqrerr2); % find particles closest to targ
+
+​    pbestval(tempi,1) = out(tempi,1); % update pbestvals
+
+​    pbest(tempi,:)  = pos(tempi,:); % update pbest positions
+
+ 
+
+​    sqrerr      = ((pbestval-egones).^2); % need to do this to reflect new pbests
+
+​    [temp,idx1]    = min(sqrerr);
+
+​    iterbestval    = pbestval(idx1);    
+
+​    if (iterbestval-errgoal)^2 <= (gbestval-errgoal)^2
+
+​      gbestval = iterbestval;
+
+​      gbest  = pbest(idx1,:);
+
+​      if strcmp(functname,'pso_neteval')
+
+​        net=setx(net,gbest);
+
+​       end
+
+​    end
+
+   end
+
+  end
+
+ 
+
+ 
